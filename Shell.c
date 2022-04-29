@@ -1,7 +1,6 @@
 /*
-OS - Ex3
-In this program I am creating a simple shell, everytime showing prompt to the user and executing a commands from the user.
-Adiel Rozenfeld - 208349019
+Linux Shell
+In this program I am creating a simple shell, showing prompt to the user and executing a commands from the user.
 */
 #include <stdio.h>
 #include <string.h>
@@ -24,7 +23,6 @@ int commandsCounter;
 int pipeUse;
 
 /*
- **************************IN ADDITION TO EX2B**************************
  Function receive the user command as a string (str) and how many pipes are needed (pipeCount).
  First adding the amount of pipes needed to the amount were used.
  Creating 3 String, each one of them represent the commands (using third only if needed).
