@@ -1,12 +1,14 @@
 /*
-Linux Shell
-In this program I am creating a simple shell, showing prompt to the user and executing a commands from the user.
+In this program I am creating a simple shell.
 */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <wait.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #define MAX_LIMIT 512
 FILE *fp;
 char **createCommandStr (char *str);
@@ -15,14 +17,105 @@ void printHistory ();
 void executePipe (char *str, int pipeCount);
 void executeCommand (char *str);
 void freeArgv (char **argv);
+void deleteQuotation (char **str);
+void handler (int sig);
+void normalizeHistoryCommand (char *str, int length);
+void rewriteNohup (char **argv);
 char *historyCommand (char *str);
 int wordsCounter (char *str);
 int checkPipe (char *str);
+int shouldWait (char *str);
 int totalWords;
 int commandsCounter;
 int pipeUse;
 
+
 /*
+ Function recvive argv (two-dimensional string array), delete the "nohup" from the array.
+*/
+void
+rewriteNohup (char **argv)
+{
+    int i;
+      for (i = 0; argv[i + 1] != NULL; i++)
+	{
+	  strcpy (argv[i], argv[i + 1]);
+	}
+      argv[i] = NULL;
+}
+
+/*
+ Function receive a string and length, deleting all spaces in the end of the string, by so, making it valid as history command.
+*/
+void
+normalizeHistoryCommand (char *str, int length)
+{
+  for (int i = length - 1; str[i] < '0' || str[i] > '9'; i--)
+    {
+      if (str[i] == ' ')
+	str[i] = '\0';
+    }
+  str[strlen (str)] = '\n';
+  strcpy (str, historyCommand (str));
+}
+
+/*
+ Function receive a **argv command, if it has "echo", deleting all quotes in it.
+*/
+void
+deleteQuotation (char **str)
+{
+  if (strcmp (str[0], "echo") == 0)
+    {
+      if (str[1][0] == '"')
+	{
+	  int k = 0;
+	  int l = 0;
+	  while (str[k] != NULL)
+	    k++;
+	  while (str[k - 1][l] != '\0')
+	    l++;
+	  if (str[k - 1][l - 1] == '"')
+	    {
+	      for (int n = 0; str[1][n] != '\0'; n++)
+		str[1][n] = str[1][n + 1];
+	      if (k - 1 == 1)
+		str[1][l - 2] = '\0';
+	      else
+		str[k - 1][l - 1] = '\0';
+	    }
+	}
+    }
+}
+
+/*
+ Using waitpid() for all sons.
+*/
+void
+handler (int sig)
+{
+  waitpid (-1, NULL, WNOHANG);
+}
+
+
+/*
+ Function receive a string, return 1 if there is no '&', else return 0.
+*/
+int
+shouldWait (char *str)
+{
+  char sign;
+  for (int i = 0; str[i] != '\0'; i++)
+    if (str[i] != ' ' && str[i] != '\0' && str[i] != '\n')
+      sign = str[i];
+  if (sign != '&')
+    return 1;
+
+  return 0;
+}
+
+/*
+ **************************IN ADDITION TO EX2B**************************
  Function receive the user command as a string (str) and how many pipes are needed (pipeCount).
  First adding the amount of pipes needed to the amount were used.
  Creating 3 String, each one of them represent the commands (using third only if needed).
@@ -36,130 +129,221 @@ int pipeUse;
  Double pipe:Connecting first and second son to the first pipe just as before.
  Connecting son #2 and son #3 to the second pipe, son #2 output and son #2 input.
  Each son is executing their command, finally the father wait() for them to finish and return.
- If one of the commands did not work, using perror() and free the argv[] arrays
+ If one of the commands did not work, using perror() and free the argv[] arrays.
 */
 void
 executePipe (char *str, int pipeCount)
 {
-    pipeUse += pipeCount;
-    char firstCmd[MAX_LIMIT];
-    char secondCmd[MAX_LIMIT];
-    char thirdCmd[MAX_LIMIT];
-    int pipeDone = 0;
-    int i = 0;
-    while (pipeDone < pipeCount + 1)
+  int printCmd = 0;
+  pipeUse += pipeCount;
+  char firstCmd[MAX_LIMIT];
+  char secondCmd[MAX_LIMIT];
+  char thirdCmd[MAX_LIMIT];
+  int pipeDone = 0;
+  int i = 0;
+  while (pipeDone < pipeCount + 1)
     {
-        if (pipeDone == 0)
-        {
-            for (int j = 0; str[i] != '|'; i++)
-            {
-                firstCmd[j] = str[i];
-                firstCmd[++j] = ' ';
-                firstCmd[j+1] = '\0';
-            }
-        }
-        else if (pipeDone == 1)
-        {
-            while (str[i] == ' ')
-                i++;
-            for (int j = 0; str[i] != '|' && str[i] != '\0'; i++)
-            {
-                secondCmd[j] = str[i];
-                secondCmd[++j] = ' ';
-                secondCmd[j+1] = '\0';
-            }
-        }
-        else
-        {
-            while (str[i] == ' ')
-                i++;
-            for (int j = 0; str[i] != '\0'; i++)
-            {
-                thirdCmd[j] = str[i];
-                thirdCmd[++j] = '\0';
-            }
-            int j = i - 1;
-            while (thirdCmd[j] == ' ')
-                thirdCmd[j--] = '\0';
-        }
-        pipeDone++;
-        i++;
+      if (pipeDone == 0)
+	{
+	  for (int j = 0; str[i] != '|'; i++)
+	    {
+	      firstCmd[j] = str[i];
+	      firstCmd[++j] = ' ';
+	      firstCmd[j + 1] = '\0';
+	    }
+	}
+      else if (pipeDone == 1)
+	{
+	  while (str[i] == ' ')
+	    i++;
+	  for (int j = 0; str[i] != '|' && str[i] != '\0'; i++)
+	    {
+	      secondCmd[j] = str[i];
+	      secondCmd[++j] = ' ';
+	      secondCmd[j + 1] = '\0';
+	    }
+	}
+      else
+	{
+	  while (str[i] == ' ')
+	    i++;
+	  for (int j = 0; str[i] != '\0'; i++)
+	    {
+	      thirdCmd[j] = str[i];
+	      thirdCmd[++j] = '\0';
+	    }
+	  int j = i - 1;
+	  while (thirdCmd[j] == ' ')
+	    thirdCmd[j--] = '\0';
+	}
+      pipeDone++;
+      i++;
     }
-    int fds[2];
-    int fds2[2];
-    pipe (fds);
-    pipe (fds2);
-    if (fork() != 0){
-        if (fork() != 0){
-            if (pipeCount == 2) {
-                if (fork() != 0) {//double pipe father
-                    close (fds[1]);
-                    close (fds[0]);
-                    close (fds2[0]);
-                    close (fds2[1]);
-                    while (wait(NULL) > 0);
-                    return;
-                }// son #3 if needed change input
-                char **cmd3 = createCommandStr (thirdCmd);
-                dup2 (fds2[0], STDIN_FILENO);
-                close (fds[1]);
-                close (fds[0]);
-                close (fds2[0]);
-                close (fds2[1]);
-                if (execvp (cmd3[0], cmd3) == -1)
-                {
-                    perror ("execvp");
-                    freeArgv (cmd3);
-                    exit (1);
-                }
-            }
-            else{ // single pipe father
-                close (fds[1]);
-                close (fds[0]);
-                close (fds2[0]);
-                close (fds2[1]);
-                while (wait(NULL) > 0);
-                return;
-            }
-        } // son #2 check single/double
-        char **cmd2 = createCommandStr (secondCmd);
-        if (pipeCount == 2){ // double
-            dup2 (fds[0], STDIN_FILENO);
-            dup2 (fds2[1], STDOUT_FILENO);
-            close (fds[0]);
-            close (fds[1]);
-            close (fds2[0]);
-            close (fds2[1]);
-        }
-        else{
-            dup2 (fds[0], STDIN_FILENO);
-            close (fds[1]);
-            close (fds[0]);
-            close (fds2[0]);
-            close (fds2[1]);
-        }
-        if (execvp (cmd2[0], cmd2) == -1)
-        {
-            perror ("execvp");
-            freeArgv (cmd2);
-            exit (1);
-        }
+  if (firstCmd[0] == '!')
+    {
+      normalizeHistoryCommand (firstCmd, strlen (firstCmd));
+      printCmd = 1;
     }
-    else{ // son #1 change output
-        char **cmd1 = createCommandStr (firstCmd);
-        dup2 (fds[1], STDOUT_FILENO);
-        close (fds[0]);
-        close (fds[1]);
-        close (fds2[0]);
-        close (fds2[1]);
-        if (execvp (cmd1[0], cmd1) == -1)
-        {
-            perror ("execvp");
-            freeArgv (cmd1);
-            exit (1);
-        }
+  if (secondCmd[0] == '!')
+    {
+      normalizeHistoryCommand (secondCmd, strlen (secondCmd));
+      printCmd = 1;
+    }
+  if (thirdCmd[0] == '!')
+    {
+      normalizeHistoryCommand (thirdCmd, strlen (thirdCmd));
+      printCmd = 1;
+    }
+  if (printCmd == 1)
+    {
+      char pipeCommandStr[512];
+      strcpy (pipeCommandStr, firstCmd);
+      pipeCommandStr[strlen (pipeCommandStr) - 1] = '\0';
+      strcat (pipeCommandStr, " | ");
+      strcat (pipeCommandStr, secondCmd);
+      if (pipeCount == 2)
+	{
+	  pipeCommandStr[strlen (pipeCommandStr) - 1] = '\0';
+	  strcat (pipeCommandStr, " | ");
+	  strcat (pipeCommandStr, thirdCmd);
+	}
+      printf ("%s", pipeCommandStr);
+       int pipeCount = checkPipe (pipeCommandStr);
+	  if (pipeCount > 2){
+	    printf ("Invalid command.\n");
+	      return;
+	  }
+	  else{
+	  executePipe (pipeCommandStr, pipeCount);
+        return;
+	  }
+    }
+  int fds[2];
+  int fds2[2];
+  pipe (fds);
+  pipe (fds2);
+  if (fork () != 0)
+    {
+      if (fork () != 0)
+	{
+	  if (pipeCount == 2)
+	    {
+	      if (fork () != 0)
+		{		//double pipe father
+		  close (fds[1]);
+		  close (fds[0]);
+		  close (fds2[0]);
+		  close (fds2[1]);
+		  if (shouldWait (str) == 1)
+		    while (wait (NULL) > 0);
+		  addToHistory (str);
+		  //addToHistory (secondCmd);
+		  //addToHistory (thirdCmd);
+		  return;
+		}		// son #3 if needed change input
+	      char **cmd3 = createCommandStr (thirdCmd);
+	      deleteQuotation (cmd3);
+	      if (strcmp(cmd3[0], "nohup") == 0){
+	        rewriteNohup(cmd3);
+	        int fd = open ("nohup.txt", O_WRONLY | O_CREAT | O_APPEND,
+			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	        dup2 (fd, STDOUT_FILENO);
+	        signal (SIGHUP, SIG_IGN);
+	      }
+	      dup2 (fds2[0], STDIN_FILENO);
+	      close (fds[1]);
+	      close (fds[0]);
+	      close (fds2[0]);
+	      close (fds2[1]);
+	      if (strcmp(cmd3[0], "history") == 0){
+      printHistory();
+          freeArgv(cmd3);
+          exit(1);
+      }
+	      if (execvp (cmd3[0], cmd3) == -1)
+		{
+		  perror ("execvp");
+		  freeArgv (cmd3);
+		  exit (1);
+		}
+	    }
+	  else
+	    {			// single pipe father
+	      close (fds[1]);
+	      close (fds[0]);
+	      close (fds2[0]);
+	      close (fds2[1]);
+	      if (shouldWait (str) == 1)
+		while (wait (NULL) > 0);
+	      i = strlen (secondCmd) - 1;
+	      while (secondCmd[i] == ' ')
+		secondCmd[i--] = '\0';
+	      addToHistory (str);
+	   //   addToHistory (secondCmd);
+	      return;
+	    }
+	}			// son #2 check single/double
+      char **cmd2 = createCommandStr (secondCmd);
+      deleteQuotation (cmd2);
+      if (pipeCount == 2)
+	{			// double
+	  dup2 (fds[0], STDIN_FILENO);
+	  dup2 (fds2[1], STDOUT_FILENO);
+	  close (fds[0]);
+	  close (fds[1]);
+	  close (fds2[0]);
+	  close (fds2[1]);
+	}
+      else
+	{
+	    if (strcmp(cmd2[0], "nohup") == 0){
+	        rewriteNohup(cmd2);
+	        int fd = open ("nohup.txt", O_WRONLY | O_CREAT | O_APPEND,
+			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	        dup2 (fd, STDOUT_FILENO);
+	        signal (SIGHUP, SIG_IGN);
+	      }
+	  dup2 (fds[0], STDIN_FILENO);
+	  close (fds[1]);
+	  close (fds[0]);
+	  close (fds2[0]);
+	  close (fds2[1]);
+	}
+	if (strcmp(cmd2[0], "history") == 0){
+      printHistory();
+          freeArgv(cmd2);
+          exit(1);
+      }
+      if (execvp (cmd2[0], cmd2) == -1)
+	{
+	  perror ("execvp");
+	  freeArgv (cmd2);
+	  exit (1);
+	}
+    }
+  else
+    {				// son #1 change output
+      char **cmd1 = createCommandStr (firstCmd);
+      deleteQuotation (cmd1);
+      dup2 (fds[1], STDOUT_FILENO);
+      close (fds[0]);
+      close (fds[1]);
+      close (fds2[0]);
+      close (fds2[1]);
+      if (strcmp(cmd1[0], "history") == 0){
+      printHistory();
+          freeArgv(cmd1);
+          exit(1);
+      }
+      else if (execvp (cmd1[0], cmd1) == -1)
+	{
+	  perror ("execvp");
+	  freeArgv (cmd1);
+	  exit (1);
+	}
     }
 }
+
 
 /*
 Function check if there's a need for pipe (single duo or none) and return 0, 1, 2 accordingly.
@@ -168,13 +352,13 @@ If there is more then double pipe required (pipeCount > 2) unable to execute and
 int
 checkPipe (char *str)
 {
-    int pipeCount = 0;
-    for (int i = 0; str[i] != '\0'; i++)
+  int pipeCount = 0;
+  for (int i = 0; str[i] != '\0'; i++)
     {
-        if (str[i] == '|')
-            pipeCount++;
+      if (str[i] == '|')
+	pipeCount++;
     }
-    return pipeCount;
+  return pipeCount;
 }
 
 /*
@@ -185,21 +369,21 @@ return wordsCount.
 int
 wordsCounter (char *str)
 {
-    int i;
-    int wordsCount = 0;
-    for (i = 0; str[i] != '\0'; i++)
+  int i;
+  int wordsCount = 0;
+  for (i = 0; str[i] != '\0'; i++)
     {
-        if (str[i] != ' ' && str[i] != '\0' && str[i] != '\n')
-        {
-            if (i > 0 && str[i - 1] == ' ')
-                wordsCount++;
-        }
+      if (str[i] != ' ' && str[i] != '\0' && str[i] != '\n')
+	{
+	  if (i > 0 && str[i - 1] == ' ')
+	    wordsCount++;
+	}
     }
-    if (i == 1)
-        wordsCount = 0;
-    else if (i > 0 && str[0] != ' ')
-        wordsCount++;
-    return wordsCount;
+  if (i == 1)
+    wordsCount = 0;
+  else if (i > 0 && str[0] != ' ')
+    wordsCount++;
+  return wordsCount;
 }
 
 /*
@@ -210,14 +394,14 @@ Finaly free the array itself.
 void
 freeArgv (char **argv)
 {
-    for (int i = 0; argv[i] != NULL; i++)
+  for (int i = 0; argv[i] != NULL; i++)
     {
-        free (argv[i]);
-        argv[i] = NULL;
+      free (argv[i]);
+      argv[i] = NULL;
 
     }
-    free (argv);
-    argv = NULL;
+  free (argv);
+  argv = NULL;
 }
 
 /*
@@ -230,31 +414,40 @@ and free the **argv.
 void
 executeCommand (char *str)
 {
-    char **argv = createCommandStr (str);
-    if (argv == NULL)
+  pid_t x;
+  x = fork ();
+  if (x == 0)
     {
-        printf ("Invalid command\n");
+      char **argv = createCommandStr (str);
+      if (argv == NULL)
+	{
+	  printf ("Invalid command\n");
+	}
+      if (strcmp (argv[0], "nohup") == 0)
+	{
+	    rewriteNohup(argv);
+	  int fd = open ("nohup.txt", O_WRONLY | O_CREAT | O_APPEND,
+			 S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	  dup2 (fd, STDOUT_FILENO);
+	  signal (SIGHUP, SIG_IGN);
+	}
+	 if (strcmp(argv[0], "history") == 0){
+      printHistory();
+          freeArgv(argv);
+          exit(1);
+      }
+      if (execvp (argv[0], argv) == -1)
+	{
+	  perror ("execvp");
+	  freeArgv (argv);
+	  exit (1);
+	}
     }
-    pid_t x;
-    x = fork ();
-    if (x == 0)
-    {
-        if (execvp (argv[0], argv) == -1)
-        {
-            perror ("execvp");
-            freeArgv (argv);
-            exit (1);
-        }
-    }
-    int status;
-    wait (&status);
-    if (status == 0)
-    {
-        addToHistory (str);
-        totalWords += wordsCounter (str);
-        commandsCounter++;
-    }
-    freeArgv (argv);
+  if (shouldWait (str) == 1)
+    while (wait (NULL) > 0);
+  addToHistory (str);
+  totalWords += wordsCounter (str);
+  commandsCounter++;
 }
 
 /*
@@ -267,62 +460,61 @@ Else, it returns the valid command, and it will be executed later (calling execu
 char *
 historyCommand (char *str)
 {
-    fp = fopen ("History.txt", "r");
-    if (fp == NULL)
+  fp = fopen ("History.txt", "r");
+  if (fp == NULL)
     {
-        printf ("Cannot open file\n");
-        return "continue";
+      printf ("Cannot open file\n");
+      return "continue";
     }
-    char numStr[512];
-    for (int i = 1; str[i] != '\n';)
+  char numStr[512];
+  for (int i = 1; str[i] != '\n';)
     {
-        if (str[i] >= '0' && str[i] <= '9')
-        {
-            numStr[i - 1] = str[i];
-            numStr[i++] = '\0';
-        }
-        else
-        {
-            printf ("Invalid command number!\n");
-            fclose (fp);
-            return "continue";
-        }
+      if (str[i] >= '0' && str[i] <= '9')
+	{
+	  numStr[i - 1] = str[i];
+	  numStr[i++] = '\0';
+	}
+      else
+	{
+	  printf ("Invalid command number!\n");
+	  fclose (fp);
+	  return "continue";
+	}
     }
-    int lineNum = atoi (numStr);
-    char line[MAX_LIMIT] = { 0 };
-    int maxLine = 0;
-    while (fgets (line, MAX_LIMIT, fp))
-        maxLine++;
-    rewind (fp);
-    if (lineNum > maxLine || lineNum <= 0)
+  int lineNum = atoi (numStr);
+  char line[MAX_LIMIT] = { 0 };
+  int maxLine = 0;
+  while (fgets (line, MAX_LIMIT, fp))
+    maxLine++;
+  rewind (fp);
+  if (lineNum > maxLine || lineNum <= 0)
     {
-        printf ("Invalid command number!\n");
-        fclose (fp);
-        return "continue";
+      printf ("Invalid command number!\n");
+      fclose (fp);
+      return "continue";
     }
-    for (int i = 0; i < lineNum; i++)
+  for (int i = 0; i < lineNum; i++)
     {
-        fgets (line, MAX_LIMIT, fp);
+      fgets (line, MAX_LIMIT, fp);
     }
-    fclose (fp);
-    printf ("%s", line);
-    if (strcmp (line, "history\n") == 0)
+  fclose (fp);
+//   printf ("%s", line);
+  if (strcmp (line, "history\n") == 0)
     {
-        addToHistory (line);
-        printHistory ();
-        commandsCounter++;
-        totalWords++;
-        return "continue";
+      addToHistory (line);
+      printHistory ();
+      commandsCounter++;
+      totalWords++;
+      return "continue";
     }
-    for (int i = 0; str[i] != '\0'; i++)
-        if (str[i] == '\n')
-        {
-            str[i] = '\0';
-            break;
-        }
-
-    strcpy (str, line);
-    return str;
+  for (int i = 0; str[i] != '\0'; i++)
+    if (str[i] == '\n')
+      {
+	str[i] = '\0';
+	break;
+      }
+  strcpy (str, line);
+  return str;
 }
 
 /*
@@ -333,19 +525,19 @@ Finally close file.
 void
 printHistory ()
 {
-    fp = fopen ("History.txt", "r");
-    if (fp == NULL)
+  fp = fopen ("History.txt", "r");
+  if (fp == NULL)
     {
-        printf ("Cannot open file");
-        return;
+      printf ("Cannot open file");
+      return;
     }
-    char line[MAX_LIMIT] = { 0 };
-    int lineNum = 1;
-    while (fgets (line, MAX_LIMIT, fp))
+  char line[MAX_LIMIT] = { 0 };
+  int lineNum = 1;
+  while (fgets (line, MAX_LIMIT, fp))
     {
-        printf ("%d: %s", lineNum++, line);
+      printf ("%d: %s", lineNum++, line);
     }
-    fclose (fp);
+  fclose (fp);
 }
 
 /*
@@ -356,14 +548,25 @@ If file was open successfully, writing to file in a new line the string received
 void
 addToHistory (char *str)
 {
-    fp = fopen ("History.txt", "a");
-    if (fp == NULL)
+  int i = 0;
+  while (str[i] != '\0')
+    i++;
+  int j = i - 1;
+  while (str[i - 1] == ' ')
+    str[i--] = '\0';
+  if (str[i - 1] != '\n')
     {
-        printf ("Cannot open file");
-        exit (1);
+      str[i++] = '\n';
+      str[i] = '\0';
     }
-    fprintf (fp, "%s", str);
-    fclose (fp);
+  fp = fopen ("History.txt", "a");
+  if (fp == NULL)
+    {
+      printf ("Cannot open file");
+      exit (1);
+    }
+  fprintf (fp, "%s", str);
+  fclose (fp);
 }
 
 /*
@@ -376,31 +579,34 @@ finally, put NULL in the last spot of the array and return the argv two-dimensio
 char **
 createCommandStr (char *str)
 {
-    int i;
-    char word[MAX_LIMIT];
-    int wordsCount = wordsCounter (str);
-    char **argv = (char **) malloc ((wordsCount + 1) * sizeof (char *));
-    int j = 0;
-    int dest = 0;
-    for (i = 0; str[i] != '\0'; i++)
+  int i;
+  char word[MAX_LIMIT];
+  int wordsCount = wordsCounter (str);
+  char **argv = (char **) malloc ((wordsCount + 1) * sizeof (char *));
+  int j = 0;
+  int dest = 0;
+  for (i = 0; str[i] != '\0'; i++)
     {
-        if (str[i] == ' ' || str[i] == '\n')
-        {
-            if (i > 0 && str[i] == ' ' && str[i - 1] == ' ')
-                continue;
-            argv[dest] = (char *) malloc ((10) * sizeof (char));
-            strcpy (argv[dest++], word);
-            j = 0;
-        }
-        else
-        {
-            word[j] = str[i];
-            word[++j] = '\0';
-        }
+      if (str[i] == ' ' || str[i] == '\n')
+	{
+	  if (i > 0 && str[i] == ' ' && str[i - 1] == ' ')
+	    continue;
+	  argv[dest] = (char *) malloc ((10) * sizeof (char));
+	  strcpy (argv[dest++], word);
+	  j = 0;
+	}
+      else
+	{
+	  word[j] = str[i];
+	  word[++j] = '\0';
+	}
     }
-    argv[wordsCount] = NULL;
-//   printf("%s\n", argv[0]);
-    return argv;
+  if (argv[wordsCount - 1][strlen (word) - 1] == '&')
+    argv[wordsCount - 1][strlen (word) - 1] = '\0';
+  if (strcmp (argv[wordsCount - 1], "") == 0)
+    argv[wordsCount - 1] = NULL;
+  argv[wordsCount] = NULL;
+  return argv;
 }
 
 /*
@@ -414,65 +620,80 @@ Finaly, using the executeCommand() function and going to next iteration.
 int
 main ()
 {
-    int flag = 1;
-    char userS[MAX_LIMIT];
-    char cwd[512];
-    getcwd (cwd, sizeof (cwd));
-    while (flag == 1)
+  signal (SIGCHLD, handler);
+  int flag = 1;
+  char userS[MAX_LIMIT];
+  char cwd[512];
+  getcwd (cwd, sizeof (cwd));
+  while (flag == 1)
     {
-        printf ("%s>", cwd);
-        fgets (userS, MAX_LIMIT, stdin);
-        if (userS[strlen (userS) - 2] == ' ' || userS[0] == ' ')
-        {
-            printf ("Invalid command\n");
-            continue;
-        }
-        if (strcmp (userS, "\n") == 0)
-            continue;
-        if (strcmp (userS, "done\n") == 0)
-        {
-            flag = 0;
-            printf ("Number of commands: %d\n", commandsCounter);
-            printf("Number of pipes: %d\n", pipeUse);
-            printf("See you next time !");
-            continue;
-        }
-        if (strcmp (userS, "history\n") == 0)
-        {
-            addToHistory (userS);
-            printHistory ();
-            totalWords++;
-            commandsCounter++;
-            continue;
-        }
-        if ((strlen (userS) > 3 && userS[0] == 'c' && userS[1] == 'd'
-             && userS[2] == ' ') || (userS[0] == 'c' && userS[1] == 'd'
-                                     && strlen (userS) == 3))
-        {
-            printf ("command not supported (Yet)\n");
-            totalWords++;
-            commandsCounter++;
-            continue;
-        }
-        if (userS[0] == '!' && strlen (userS) > 2)
-        {
-            strcpy (userS, historyCommand (userS));
-            if (strcmp (userS, "continue") == 0)
-                continue;
-        }
-        int pipeCount = checkPipe (userS);
-        if (pipeCount > 0)
-        {
-            if (pipeCount > 2)
-                printf ("Invalid command.\n");
-            else{
-                executePipe (userS, pipeCount);
-                commandsCounter++;
-                addToHistory(userS);
-            }
-            continue;
-        }
-        executeCommand (userS);
+      printf ("%s>", cwd);
+      fgets (userS, MAX_LIMIT, stdin);
+      if (userS[strlen (userS) - 2] == ' ' || userS[0] == ' ')
+	{
+	  printf ("Invalid command\n");
+	  continue;
+	}
+      if (strcmp (userS, "\n") == 0)
+	continue;
+      if (strcmp (userS, "done\n") == 0)
+	{
+	  flag = 0;
+	  printf ("Number of commands: %d\n", commandsCounter);
+	  printf ("Number of pipes: %d\n", pipeUse);
+	  printf ("See you next time !");
+	  continue;
+	}
+      if (strcmp (userS, "history\n") == 0)
+	{
+	  addToHistory (userS);
+	  printHistory ();
+	  totalWords++;
+	  commandsCounter++;
+	  continue;
+	}
+      if ((strlen (userS) > 3 && userS[0] == 'c' && userS[1] == 'd'
+	   && userS[2] == ' ') || (userS[0] == 'c' && userS[1] == 'd'
+				   && strlen (userS) == 3))
+	{
+	  printf ("command not supported (Yet)\n");
+	  totalWords++;
+	  commandsCounter++;
+	  continue;
+	}
+      int pipeCount = checkPipe (userS);
+      if (pipeCount > 0)
+	{
+	  if (pipeCount > 2)
+	    printf ("Invalid command.\n");
+	  else
+	    {
+	      executePipe (userS, pipeCount);
+	      commandsCounter++;
+	    }
+	  continue;
+	}
+      else if (userS[0] == '!' && strlen (userS) > 2)
+	{
+	  strcpy (userS, historyCommand (userS));
+	  if (strcmp (userS, "continue") == 0)
+	    continue;
+	  printf ("%s", userS);
+	  int pipeCount = checkPipe (userS);
+	  if (pipeCount > 0)
+	{
+	  if (pipeCount > 2)
+	    printf ("Invalid command.\n");
+	  else
+	    {
+	      executePipe (userS, pipeCount);
+	      commandsCounter++;
+	    }
+	  continue;
+	}
+	}
+
+      executeCommand (userS);
     }
-    return 0;
+  return 0;
 }
