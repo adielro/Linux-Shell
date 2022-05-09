@@ -1,6 +1,3 @@
-/*
-In this program I am creating a simple shell.
-*/
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -446,7 +443,6 @@ executeCommand (char *str)
   if (shouldWait (str) == 1)
     while (wait (NULL) > 0);
   addToHistory (str);
-  totalWords += wordsCounter (str);
   commandsCounter++;
 }
 
@@ -498,13 +494,11 @@ historyCommand (char *str)
       fgets (line, MAX_LIMIT, fp);
     }
   fclose (fp);
-//   printf ("%s", line);
   if (strcmp (line, "history\n") == 0)
     {
       addToHistory (line);
       printHistory ();
       commandsCounter++;
-      totalWords++;
       return "continue";
     }
   for (int i = 0; str[i] != '\0'; i++)
@@ -634,21 +628,20 @@ main ()
 	  printf ("Invalid command\n");
 	  continue;
 	}
+	totalWords += wordsCounter(userS);
       if (strcmp (userS, "\n") == 0)
 	continue;
       if (strcmp (userS, "done\n") == 0)
 	{
 	  flag = 0;
-	  printf ("Number of commands: %d\n", commandsCounter);
-	  printf ("Number of pipes: %d\n", pipeUse);
-	  printf ("See you next time !");
+	  printf ("Number of commands: %d\n", ++commandsCounter);
+	  printf("Total number of words in all commands: %d !\n", --totalWords - pipeUse);
 	  continue;
 	}
       if (strcmp (userS, "history\n") == 0)
 	{
 	  addToHistory (userS);
 	  printHistory ();
-	  totalWords++;
 	  commandsCounter++;
 	  continue;
 	}
@@ -657,7 +650,6 @@ main ()
 				   && strlen (userS) == 3))
 	{
 	  printf ("command not supported (Yet)\n");
-	  totalWords++;
 	  commandsCounter++;
 	  continue;
 	}
