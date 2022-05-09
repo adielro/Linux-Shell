@@ -1,16 +1,31 @@
 Linux Shell
 Authored by Adiel Rozenfeld
-208349019
 
 ==Description==
 
-In this program we demonstrating a linux shell, printing each time the current path, and waiting for user input.
+In this program I am demonstrating a linux shell, printing each time the current path, and waiting for user input.
 Each time the user insert a command, we'll try executing it.
 using a txt file for history of commands the user inserted.
 when the user insert "done", printing the number of commands was succesfully used and the number of words in all commands.
 In addition, also supporting pipes.
 
 Functions:
+
+shouldWait:
+Function receive a string, return 1 if there is no '&', else return 0.
+
+handler
+Using waitpid() for all sons.
+
+deleteQuotation:
+Function receive a **argv command, if it has "echo", deleting all quotes in it.
+
+normalizeHistoryCommand:
+Function receive a string and length, deleting all spaces in the end of the string, by so, making it valid as history command.
+
+rewriteNohup:
+Function recvive argv (two-dimensional string array), delete the "nohup" from the array.
+
 wordsCounter:
 Function receive a string and goes through it, every time it encounter char (not space, '\0' and '\n') it check if the char before was space,
 if it was so add one to wordsCount int
